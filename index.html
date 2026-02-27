@@ -9,7 +9,7 @@
   html, body { width:100%; height:100%; margin:0; padding:0; }
   #map { width:100%; height:100%; }
 
-  /* 숫자 마커 */
+  /* 숫자 마커(항상 표시) */
   .marker{
     background:#d60000; color:#fff;
     width:34px; height:34px; border-radius:50%;
@@ -44,12 +44,9 @@
 
   /* 컨트롤 */
   .controls{
-    position:fixed;
-    top:12px;
-    right:12px;
+    position:fixed; top:12px; right:12px;
     z-index:999999;
-    display:flex;
-    gap:8px;
+    display:flex; gap:8px;
   }
   .btn{
     border:0;
@@ -81,7 +78,6 @@
  * ?sid=스프레드시트ID&sheet=탭이름&orderCol=순서&addrCol=주소
  */
 const params = new URLSearchParams(location.search);
-
 const DEFAULT_SID   = "1lvmKmQeich7vLiMkDFX9qd1_E5890ATQ33UDcvArMsg";
 const DEFAULT_SHEET = "Sheet1";
 const DEFAULT_ORDER_COL = "순서";
@@ -123,7 +119,7 @@ kakao.maps.load(async () => {
   const geocoder = new kakao.maps.services.Geocoder();
 
   // =========================
-  // 1) 마커는 "무조건 표시"
+  // 1) 마커는 "항상 표시"
   // =========================
   const overlays = [];
 
@@ -149,7 +145,7 @@ kakao.maps.load(async () => {
       zIndex: 9999
     });
 
-    // ✅ 항상 지도에 올려둠
+    // ✅ 무조건 표시
     overlay.setMap(map);
     overlays.push(overlay);
 
@@ -175,22 +171,49 @@ kakao.maps.load(async () => {
   }
 
   // =========================
-  // 2) 내 위치 표시 + "내 위치 중심" 따라가기
+  // 2) 내 위치 표시 + 지도는 "내 위치 중심"
   // =========================
   let myPosOverlay = null;
   let myAccCircle = null;
   let watchId = null;
 
-  let followMe = true; // 기본 ON
+  // ✅ 따라가기 상태 + 자동복귀 타이머
+  let followMe = true;              // 기본 ON
+  const AUTO_REFOLLOW_MS = 5000;    // ✅ 5초 뒤 자동 ON 복귀
+  let refollowTimer = null;
+
   const btnFollow = document.getElementById("btnFollow");
+  function updateFollowButton(){
+    btnFollow.textContent = `따라가기: ${followMe ? "ON" : "OFF"}`;
+  }
+  updateFollowButton();
+
+  function scheduleAutoRefollow(){
+    // 이미 OFF가 아니면 스케줄할 필요 없음
+    if(followMe) return;
+
+    if(refollowTimer) clearTimeout(refollowTimer);
+    refollowTimer = setTimeout(() => {
+      followMe = true;
+      updateFollowButton();
+      panToMyLocation(true);
+    }, AUTO_REFOLLOW_MS);
+  }
 
   btnFollow.onclick = () => {
     followMe = !followMe;
-    btnFollow.textContent = `따라가기: ${followMe ? "ON" : "OFF"}`;
+    updateFollowButton();
+    if(refollowTimer) { clearTimeout(refollowTimer); refollowTimer = null; }
     if(followMe) panToMyLocation(true);
   };
 
-  document.getElementById("btnMyLoc").onclick = () => panToMyLocation(true);
+  document.getElementById("btnMyLoc").onclick = () => {
+    // 내 위치 버튼은 “따라가기 ON + 내 위치로 이동”
+    followMe = true;
+    updateFollowButton();
+    if(refollowTimer) { clearTimeout(refollowTimer); refollowTimer = null; }
+    panToMyLocation(true);
+  };
 
   function showMyLocation(lat, lng, accuracyMeters){
     const pos = new kakao.maps.LatLng(lat, lng);
@@ -248,7 +271,7 @@ kakao.maps.load(async () => {
         const { latitude, longitude, accuracy } = p.coords;
         showMyLocation(latitude, longitude, accuracy);
 
-        // ✅ 지도는 항상 내 위치 중심(ON일 때)
+        // ✅ 지도만 내 위치를 따라감(ON일 때)
         if(followMe){
           map.panTo(new kakao.maps.LatLng(latitude, longitude));
         }
@@ -258,14 +281,22 @@ kakao.maps.load(async () => {
     );
   }
 
-  // 사용자가 지도를 손으로 움직이면 따라가기 OFF (카카오맵 느낌)
+  // ✅ 사용자가 지도를 손으로 움직이면 따라가기 OFF + 5초 뒤 자동 ON 복귀
   kakao.maps.event.addListener(map, 'dragstart', function(){
     followMe = false;
-    btnFollow.textContent = `따라가기: OFF`;
+    updateFollowButton();
+    scheduleAutoRefollow();
   });
 
+  // (선택) 줌 변경도 사용자의 조작으로 보고 OFF 처리하고 싶으면 주석 해제
+  // kakao.maps.event.addListener(map, 'zoom_changed', function(){
+  //   followMe = false;
+  //   updateFollowButton();
+  //   scheduleAutoRefollow();
+  // });
+
   // =========================
-  // 3) 시트 로드 → 마커 표시 (항상 표시)
+  // 3) 시트 로드 → 마커 "전부 표시"
   // =========================
   try{
     const data = await loadSheet();
@@ -285,12 +316,13 @@ kakao.maps.load(async () => {
       okCount++;
       addMarker(index, address, g.lat, g.lng);
     }
-    toast(`마커 표시됨 ✅ ${okCount}개 (지오코딩 실패 ${failCount}개). 내 위치 중심으로 이동합니다.`);
+
+    toast(`마커 표시됨 ✅ ${okCount}개 (지오코딩 실패 ${failCount}개). 내 위치 중심으로 따라갑니다.`);
   }catch(e){
     toast(`에러: ${e.message}`);
   }
 
-  // ✅ 마지막: 내 위치 추적 시작 (내 위치 중심 모드)
+  // ✅ 내 위치 추적 시작
   startMyLocationTracking();
 });
 </script>
