@@ -9,6 +9,7 @@
   html, body { width:100%; height:100%; margin:0; padding:0; }
   #map { width:100%; height:100%; }
 
+  /* 숫자 마커(항상 표시) */
   .marker{
     background:#d60000; color:#fff;
     width:34px; height:34px; border-radius:50%;
@@ -23,6 +24,7 @@
     z-index:9999;
   }
 
+  /* 내 위치 점 */
   .me-dot{
     width:14px; height:14px; border-radius:50%;
     background:#2d7ff9;
@@ -30,6 +32,7 @@
     border:2px solid #fff;
   }
 
+  /* 토스트 */
   .toast{
     position:fixed; left:12px; right:12px; bottom:12px;
     background:rgba(0,0,0,.78); color:#fff;
@@ -39,6 +42,7 @@
     display:none;
   }
 
+  /* 컨트롤 */
   .controls{
     position:fixed; top:12px; right:12px;
     z-index:999999;
@@ -69,6 +73,10 @@
   <div id="toast" class="toast"></div>
 
 <script>
+/**
+ * URL 파라미터
+ * ?sid=스프레드시트ID&sheet=탭이름&orderCol=순서&addrCol=주소
+ */
 const params = new URLSearchParams(location.search);
 const DEFAULT_SID   = "1lvmKmQeich7vLiMkDFX9qd1_E5890ATQ33UDcvArMsg";
 const DEFAULT_SHEET = "Sheet1";
@@ -86,6 +94,7 @@ function toast(msg){
   toastEl.style.display = "block";
 }
 
+/** 길찾기(웹) 열기 */
 function openKakaoWebRoute(name, lat, lng){
   const webUrl = `https://map.kakao.com/link/to/${encodeURIComponent(name)},${lat},${lng}`;
   const w = window.open(webUrl, "_blank");
@@ -109,9 +118,17 @@ kakao.maps.load(async () => {
 
   const geocoder = new kakao.maps.services.Geocoder();
 
-  // ===== 마커(항상 표시) =====
+  // =========================
+  // 1) 마커는 "항상 표시"
+  // =========================
   const overlays = [];
-  function clearOverlays(){ while(overlays.length) overlays.pop().setMap(null); }
+
+  function clearOverlays(){
+    while(overlays.length){
+      const ov = overlays.pop();
+      ov.setMap(null);
+    }
+  }
 
   function addMarker(index, address, lat, lng){
     const coords = new kakao.maps.LatLng(lat, lng);
@@ -128,6 +145,7 @@ kakao.maps.load(async () => {
       zIndex: 9999
     });
 
+    // ✅ 무조건 표시(숨김 기능 없음)
     overlay.setMap(map);
     overlays.push(overlay);
 
@@ -145,60 +163,30 @@ kakao.maps.load(async () => {
       geocoder.addressSearch(address, (result, status) => {
         if(status === kakao.maps.services.Status.OK && result?.[0]){
           resolve({ ok:true, lat:Number(result[0].y), lng:Number(result[0].x) });
-        } else resolve({ ok:false });
+        } else {
+          resolve({ ok:false });
+        }
       });
     });
   }
 
-  // ===== 내 위치 + 따라가기 =====
+  // =========================
+  // 2) 내 위치 표시 + 지도는 "내 위치 중심"
+  // =========================
   let myPosOverlay = null;
   let myAccCircle = null;
   let watchId = null;
 
-  let followMe = true;
-  const AUTO_REFOLLOW_MS = 5000;
-
-  let isDragging = false;       // ✅ 드래그 중 여부
-  let refollowTimer = null;
-
+  let followMe = true; // 기본 ON
   const btnFollow = document.getElementById("btnFollow");
-  function updateFollowButton(){
-    btnFollow.textContent = `따라가기: ${followMe ? "ON" : "OFF"}`;
-  }
-  updateFollowButton();
-
-  function clearRefollowTimer(){
-    if(refollowTimer){ clearTimeout(refollowTimer); refollowTimer = null; }
-  }
-
-  function scheduleAutoRefollow(){
-    // ✅ "드래그가 끝난 뒤"에만 예약되도록 밖에서 호출(중요)
-    clearRefollowTimer();
-    refollowTimer = setTimeout(() => {
-      // 드래그 중이면 다시 미룸
-      if(isDragging){
-        scheduleAutoRefollow();
-        return;
-      }
-      followMe = true;
-      updateFollowButton();
-      panToMyLocation(true);
-    }, AUTO_REFOLLOW_MS);
-  }
 
   btnFollow.onclick = () => {
     followMe = !followMe;
-    updateFollowButton();
-    clearRefollowTimer();
+    btnFollow.textContent = `따라가기: ${followMe ? "ON" : "OFF"}`;
     if(followMe) panToMyLocation(true);
   };
 
-  document.getElementById("btnMyLoc").onclick = () => {
-    followMe = true;
-    updateFollowButton();
-    clearRefollowTimer();
-    panToMyLocation(true);
-  };
+  document.getElementById("btnMyLoc").onclick = () => panToMyLocation(true);
 
   function showMyLocation(lat, lng, accuracyMeters){
     const pos = new kakao.maps.LatLng(lat, lng);
@@ -248,6 +236,7 @@ kakao.maps.load(async () => {
       toast("이 브라우저는 위치 기능을 지원하지 않아요.");
       return;
     }
+
     if(watchId != null) navigator.geolocation.clearWatch(watchId);
 
     watchId = navigator.geolocation.watchPosition(
@@ -255,8 +244,8 @@ kakao.maps.load(async () => {
         const { latitude, longitude, accuracy } = p.coords;
         showMyLocation(latitude, longitude, accuracy);
 
-        // ✅ 드래그 중에는 절대 따라가지 않음
-        if(followMe && !isDragging){
+        // ✅ 지도만 내 위치를 따라감(마커는 그대로 계속 표시됨)
+        if(followMe){
           map.panTo(new kakao.maps.LatLng(latitude, longitude));
         }
       },
@@ -265,21 +254,15 @@ kakao.maps.load(async () => {
     );
   }
 
-  // ✅ 드래그 시작: OFF 유지 + 타이머 취소
+  // 사용자가 지도를 손으로 움직이면 따라가기 OFF
   kakao.maps.event.addListener(map, 'dragstart', function(){
-    isDragging = true;
     followMe = false;
-    updateFollowButton();
-    clearRefollowTimer();
+    btnFollow.textContent = `따라가기: OFF`;
   });
 
-  // ✅ 드래그 끝: 그때부터 5초 카운트 시작 → 자동 ON 복귀
-  kakao.maps.event.addListener(map, 'dragend', function(){
-    isDragging = false;
-    scheduleAutoRefollow();
-  });
-
-  // ===== 시트 로드 → 마커 전부 표시 =====
+  // =========================
+  // 3) 시트 로드 → 마커 "전부 표시"
+  // =========================
   try{
     const data = await loadSheet();
     clearOverlays();
@@ -298,11 +281,13 @@ kakao.maps.load(async () => {
       okCount++;
       addMarker(index, address, g.lat, g.lng);
     }
-    toast(`마커 표시됨 ✅ ${okCount}개 (지오코딩 실패 ${failCount}개). 내 위치 중심으로 따라갑니다.`);
+
+    toast(`마커 표시됨 ✅ ${okCount}개 (지오코딩 실패 ${failCount}개). 이제 내 위치 중심으로 따라갑니다.`);
   }catch(e){
     toast(`에러: ${e.message}`);
   }
 
+  // ✅ 내 위치 추적 시작 (지도는 내 위치 중심)
   startMyLocationTracking();
 });
 </script>
