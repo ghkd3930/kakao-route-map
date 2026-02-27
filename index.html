@@ -3,15 +3,12 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-
-<!-- ✅ Kakao Maps JS SDK (autoload=false로 안정화) -->
 <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=f50dc2a44d1f4e5431f0c50eebe87c19&libraries=services&autoload=false"></script>
 
 <style>
   html, body { width:100%; height:100%; margin:0; padding:0; }
   #map { width:100%; height:100%; }
 
-  /* ✅ 숫자 마커(클릭 대상) */
   .marker{
     background:#d60000; color:#fff;
     width:34px; height:34px; border-radius:50%;
@@ -19,16 +16,13 @@
     font-weight:700; font-size:16px;
     box-shadow:0 2px 6px rgba(0,0,0,.3);
     cursor:pointer;
-
     pointer-events:auto;
     touch-action:manipulation;
     user-select:none;
-
     position:relative;
     z-index:9999;
   }
 
-  /* ✅ 내 위치 점 */
   .me-dot{
     width:14px; height:14px; border-radius:50%;
     background:#2d7ff9;
@@ -36,7 +30,6 @@
     border:2px solid #fff;
   }
 
-  /* ✅ 하단 토스트 */
   .toast{
     position:fixed; left:12px; right:12px; bottom:12px;
     background:rgba(0,0,0,.78); color:#fff;
@@ -46,7 +39,6 @@
     display:none;
   }
 
-  /* ✅ 내 위치 버튼 */
   .controls{
     position:fixed;
     top:12px;
@@ -73,29 +65,16 @@
   <div id="map"></div>
 
   <div class="controls">
+    <button class="btn" id="btnFollow">따라가기: ON</button>
     <button class="btn" id="btnMyLoc">내 위치</button>
-    <button class="btn" id="btnReaskLoc">권한 다시요청</button>
   </div>
 
   <div id="toast" class="toast"></div>
 
 <script>
-/**
- * ✅ 한 링크에서 시트 바꿔끼우기
- *   ?sid=스프레드시트ID&sheet=탭이름&orderCol=순서&addrCol=주소
- *
- * 예)
- *   https://.../kakao-route-map/?sheet=오늘동선
- *   https://.../kakao-route-map/?sid=다른ID&sheet=Sheet1
- *   https://.../kakao-route-map/?orderCol=번호&addrCol=주소지
- */
 const params = new URLSearchParams(location.search);
-
-// 기본값(너가 준 시트)
 const DEFAULT_SID   = "1lvmKmQeich7vLiMkDFX9qd1_E5890ATQ33UDcvArMsg";
 const DEFAULT_SHEET = "Sheet1";
-
-// 기본 컬럼명
 const DEFAULT_ORDER_COL = "순서";
 const DEFAULT_ADDR_COL  = "주소";
 
@@ -110,11 +89,10 @@ function toast(msg){
   toastEl.style.display = "block";
 }
 
-/** ✅ 길찾기(웹) 확실히 열기: 인앱브라우저/딥링크 이슈 회피 */
 function openKakaoWebRoute(name, lat, lng){
   const webUrl = `https://map.kakao.com/link/to/${encodeURIComponent(name)},${lat},${lng}`;
-  const w = window.open(webUrl, "_blank"); // 새탭 시도
-  if (!w) location.href = webUrl;          // 팝업 차단이면 같은 탭 이동
+  const w = window.open(webUrl, "_blank");
+  if (!w) location.href = webUrl;
 }
 
 async function loadSheet(){
@@ -122,47 +100,23 @@ async function loadSheet(){
   const url = `https://opensheet.elk.sh/${encodeURIComponent(sid)}/${encodeURIComponent(sheet)}`;
   const res = await fetch(url);
   if(!res.ok) throw new Error(`시트 불러오기 실패: HTTP ${res.status}`);
-  const data = await res.json();
-  toast(`시트 로드됨: ${data.length}행 (orderCol=${orderCol}, addrCol=${addrCol})`);
-  return data;
-}
-
-function geocode(geocoder, address){
-  return new Promise((resolve) => {
-    geocoder.addressSearch(address, (result, status) => {
-      if(status === kakao.maps.services.Status.OK && result?.[0]){
-        resolve({ ok:true, lat:Number(result[0].y), lng:Number(result[0].x) });
-      } else {
-        resolve({ ok:false });
-      }
-    });
-  });
+  return await res.json();
 }
 
 kakao.maps.load(async () => {
-  // ✅ 지도 생성
   const map = new kakao.maps.Map(document.getElementById('map'), {
     center: new kakao.maps.LatLng(35.1595,126.8514),
     level: 5
   });
-
-  // ✅ 검은 화면 방지
   setTimeout(() => { map.relayout(); map.setCenter(map.getCenter()); }, 300);
 
   const geocoder = new kakao.maps.services.Geocoder();
-  const overlays = [];
 
-  function clearOverlays(){
-    while(overlays.length){
-      const ov = overlays.pop();
-      ov.setMap(null);
-    }
-  }
+  // =========================
+  // 1) 마커(오버레이) 관리
+  // =========================
+  const markers = []; // { index, address, lat, lng, overlay, visible }
 
-  /**
-   * ✅ 숫자만 “진짜 클릭 대상”으로 (기본 핀 마커 없음)
-   * - 화면에 보이는 빨간 숫자를 누르면 바로 길찾기 페이지 열림
-   */
   function addMarker(index, address, lat, lng){
     const coords = new kakao.maps.LatLng(lat, lng);
 
@@ -177,30 +131,54 @@ kakao.maps.load(async () => {
       yAnchor: 1,
       zIndex: 9999
     });
-    overlay.setMap(map);
-    overlays.push(overlay);
+
+    // ✅ 처음엔 지도에 안 올려도 됨(내 위치 중심 모드에서 “근처일 때만 보이게” 가능)
+    // overlay.setMap(map);
+
+    const item = { index, address, lat, lng, overlay, visible:false };
+    markers.push(item);
 
     const handler = (e) => {
       e.preventDefault();
       e.stopPropagation();
       openKakaoWebRoute(String(index), lat, lng);
     };
+    el.addEventListener("click", handler, { passive:false });
+    el.addEventListener("touchend", handler, { passive:false });
+  }
 
-    el.addEventListener("click", handler, { passive: false });
-    el.addEventListener("touchend", handler, { passive: false });
+  function geocode(address){
+    return new Promise((resolve) => {
+      geocoder.addressSearch(address, (result, status) => {
+        if(status === kakao.maps.services.Status.OK && result?.[0]){
+          resolve({ ok:true, lat:Number(result[0].y), lng:Number(result[0].x) });
+        } else {
+          resolve({ ok:false });
+        }
+      });
+    });
   }
 
   // =========================
-  // ✅ 내 위치 표시(점 + 정확도 원)
+  // 2) 내 위치 표시 + 따라가기
   // =========================
   let myPosOverlay = null;
   let myAccCircle = null;
   let watchId = null;
 
+  let followMe = true; // ✅ 기본 ON
+  const btnFollow = document.getElementById("btnFollow");
+  btnFollow.onclick = () => {
+    followMe = !followMe;
+    btnFollow.textContent = `따라가기: ${followMe ? "ON" : "OFF"}`;
+    if(followMe) panToMyLocation();
+  };
+
+  document.getElementById("btnMyLoc").onclick = () => panToMyLocation();
+
   function showMyLocation(lat, lng, accuracyMeters){
     const pos = new kakao.maps.LatLng(lat, lng);
 
-    // 내 위치 점(Overlay)
     if(!myPosOverlay){
       const el = document.createElement("div");
       el.className = "me-dot";
@@ -215,7 +193,6 @@ kakao.maps.load(async () => {
       myPosOverlay.setPosition(pos);
     }
 
-    // 정확도 원(Circle)
     const r = Math.max(Number(accuracyMeters || 0), 10);
     if(!myAccCircle){
       myAccCircle = new kakao.maps.Circle({
@@ -233,11 +210,40 @@ kakao.maps.load(async () => {
   }
 
   function panToMyLocation(){
-    if(!myPosOverlay){
-      toast("내 위치가 아직 없어요. 권한을 허용해줘요.");
-      return;
-    }
+    if(!myPosOverlay) return;
     map.panTo(myPosOverlay.getPosition());
+  }
+
+  // =========================
+  // 3) “근처 마커만 보이기” (선택 기능)
+  // =========================
+  // ✅ 반경(m) 안의 마커만 지도에 올린다 (카카오맵처럼 주변만 보이게)
+  const SHOW_WITHIN_METERS = 3000; // 필요하면 1000/2000/5000 등으로 조절
+
+  function distanceMeters(lat1,lng1,lat2,lng2){
+    // Haversine
+    const R = 6371000;
+    const toRad = (d)=> d*Math.PI/180;
+    const dLat = toRad(lat2-lat1);
+    const dLng = toRad(lng2-lng1);
+    const a = Math.sin(dLat/2)**2
+            + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;
+    return 2*R*Math.asin(Math.sqrt(a));
+  }
+
+  function updateVisibleMarkers(myLat, myLng){
+    for(const m of markers){
+      const d = distanceMeters(myLat, myLng, m.lat, m.lng);
+      const shouldShow = d <= SHOW_WITHIN_METERS;
+
+      if(shouldShow && !m.visible){
+        m.overlay.setMap(map);
+        m.visible = true;
+      } else if(!shouldShow && m.visible){
+        m.overlay.setMap(null);
+        m.visible = false;
+      }
+    }
   }
 
   function startMyLocationTracking(){
@@ -246,87 +252,56 @@ kakao.maps.load(async () => {
       return;
     }
 
-    // 1회 현재 위치
-    navigator.geolocation.getCurrentPosition(
-      (p) => {
-        const { latitude, longitude, accuracy } = p.coords;
-        showMyLocation(latitude, longitude, accuracy);
-        toast("내 위치 표시됨 ✅");
-      },
-      (err) => {
-        toast(`위치 권한/오류: ${err.message}`);
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
-    );
-
-    // 지속 추적
     if(watchId != null) navigator.geolocation.clearWatch(watchId);
+
     watchId = navigator.geolocation.watchPosition(
       (p) => {
         const { latitude, longitude, accuracy } = p.coords;
         showMyLocation(latitude, longitude, accuracy);
+
+        // ✅ 지도는 내 위치 중심 유지
+        if(followMe) map.panTo(new kakao.maps.LatLng(latitude, longitude));
+
+        // ✅ 근처 마커만 보이게 업데이트
+        updateVisibleMarkers(latitude, longitude);
       },
-      (err) => {
-        toast(`위치 추적 오류: ${err.message}`);
-      },
+      (err) => toast(`위치 추적 오류: ${err.message}`),
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
     );
   }
 
-  // 버튼 연결
-  document.getElementById("btnMyLoc").addEventListener("click", () => {
-    // 내 위치가 있으면 이동, 없으면 추적 시작 후 이동
-    if(!myPosOverlay){
-      startMyLocationTracking();
-      setTimeout(panToMyLocation, 1200);
-    } else {
-      panToMyLocation();
-    }
-  });
-
-  document.getElementById("btnReaskLoc").addEventListener("click", () => {
-    startMyLocationTracking();
-  });
-
-  // 페이지 로드 시 내 위치 추적 시작(원치 않으면 이 줄을 주석 처리)
-  startMyLocationTracking();
-
   // =========================
-  // ✅ 시트 → 마커 표시
+  // 4) 시트 로드 → 마커 준비
   // =========================
   try{
     const data = await loadSheet();
-    clearOverlays();
-
-    // 정렬(숫자)
     data.sort((a,b)=> Number(a[orderCol]) - Number(b[orderCol]));
 
-    let bounds = new kakao.maps.LatLngBounds();
-    let okCount = 0;
-    let failCount = 0;
-
+    let okCount = 0, failCount = 0;
     for(const row of data){
       const index = row[orderCol];
       const address = row[addrCol];
       if(index == null || !address) continue;
 
-      const g = await geocode(geocoder, address);
+      const g = await geocode(address);
       if(!g.ok){ failCount++; continue; }
 
       okCount++;
       addMarker(index, address, g.lat, g.lng);
-      bounds.extend(new kakao.maps.LatLng(g.lat, g.lng));
     }
-
-    if(okCount > 0){
-      map.setBounds(bounds);
-      toast(`완료 ✅ 표시 ${okCount}개 (지오코딩 실패 ${failCount}개)`);
-    } else {
-      toast(`표시할 좌표가 없어요. 컬럼명/주소 확인 (orderCol=${orderCol}, addrCol=${addrCol})`);
-    }
+    toast(`마커 준비됨 ✅ ${okCount}개 (지오코딩 실패 ${failCount}개). 내 위치를 켜면 주변만 보여요.`);
   }catch(e){
     toast(`에러: ${e.message}`);
   }
+
+  // ✅ 마지막: 내 위치 추적 시작
+  startMyLocationTracking();
+
+  // ✅ 사용자가 지도 드래그하면 따라가기 OFF (카카오맵 느낌)
+  kakao.maps.event.addListener(map, 'dragstart', function(){
+    followMe = false;
+    btnFollow.textContent = `따라가기: OFF`;
+  });
 });
 </script>
 </body>
