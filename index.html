@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=478c22de487bbe27488e28226357f0a1&libraries=services"></script>
+
+    <style>
+        html, body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+
+        #map {
+            width: 100%;
+            height: 100%;
+        }
+
+        .marker {
+            background: #d60000;
+            color: white;
+            width: 34px;
+            height: 34px;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 34px;
+            font-weight: 700;
+            font-size: 16px;
+            box-shadow: 0 2px 6px rgba(0,0,0,.3);
+            cursor: pointer;
+        }
+
+        .toast {
+            position: fixed;
+            left: 12px;
+            bottom: 12px;
+            right: 12px;
+            background: rgba(0,0,0,.75);
+            color: #fff;
+            padding: 10px 12px;
+            border-radius: 10px;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="map"></div>
+    <div id="toast" class="toast" style="display:none;"></div>
+
+    <script>
+/** ===== 설정: URL 파라미터로 시트 바꿔끼우기 =====
+ * ?sid=스프레드시트ID&sheet=탭이름&orderCol=순서&addrCol=주소
+ */
+const params = new URLSearchParams(location.search);
+
+// 기본값(네가 준 시트)
+const DEFAULT_SID = "1lvmKmQeich7vLiMkDFX9qd1_E5890ATQ33UDcvArMsg";
+const DEFAULT_SHEET = "Sheet1";
+
+// 컬럼명 기본값
+const DEFAULT_ORDER_COL = "순서";
+const DEFAULT_ADDR_COL  = "주소";
+
+const sid = params.get("sid") || DEFAULT_SID;
+const sheet = params.get("sheet") || DEFAULT_SHEET;
+const orderCol = params.get("orderCol") || DEFAULT_ORDER_COL;
+const addrCol = params.get("addrCol") || DEFAULT_ADDR_COL;
+
+const toast = (msg) => {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.style.display = "block";
+};
+
+const map = new kakao.maps.Map(document.getElementById('map'), {
+  center: new kakao.maps.LatLng(35.1595,126.8514),
+  level: 5
+});
+
+// 검은 화면 방지(초기 레이아웃)
+setTimeout(() => { map.relayout(); map.setCenter(map.getCenter()); }, 300);
+
+const geocoder = new kakao.maps.services.Geocoder();
+const overlays = [];
+
+// 기존 오버레이 지우기
+function clearOverlays(){
+  while(overlays.length){
+    const ov = overlays.pop();
+    ov.setMap(null);
+  }
+}
+
+// 마커(오버레이) 찍기
+function addMarker(index, address, lat, lng){
+  const coords = new kakao.maps.LatLng(lat,lng);
+  const content = `<div class="marker" title="${address}">${index}</div>`;
+  const overlay = new kakao.maps.CustomOverlay({ position: coords, content });
+  overlay.setMap(map);
+  overlays.push(overlay);
+
+  overlay.getContent().onclick = function(){
+    // 클릭하면 카카오맵 길찾기(모바일이면 앱으로 넘어감)
+    location.href = `https://map.kakao.com/link/to/${encodeURIComponent(index)},${lat},${lng}`;
+  };
+}
+
+// 구글시트(JSON) 가져오기
+async function loadSheet(){
+  toast(`불러오는 중… (sid=${sid}, sheet=${sheet})`);
+  const url = `https://opensheet.elk.sh/${encodeURIComponent(sid)}/${encodeURIComponent(sheet)}`;
+  const res = await fetch(url);
+  if(!res.ok) throw new Error(`시트 불러오기 실패: HTTP ${res.status}`);
+  return await res.json();
+}
+
+// 주소→좌표 변환(프로미스 래핑)
+function geocode(address){
+  return new Promise((resolve) => {
+    geocoder.addressSearch(address, (result, status) => {
+      if(status === kakao.maps.services.Status.OK && result?.[0]){
+        resolve({ ok:true, lat: Number(result[0].y), lng: Number(result[0].x) });
+      } else {
+        resolve({ ok:false });
+      }
+    });
+  });
+}
+
+(async function main(){
+  try{
+    const data = await loadSheet();
+    clearOverlays();
+
+    // 정렬
+    data.sort((a,b)=> Number(a[orderCol]) - Number(b[orderCol]));
+
+    let bounds = new kakao.maps.LatLngBounds();
+    let okCount = 0;
+    let failCount = 0;
+
+    for(const row of data){
+      const index = row[orderCol];
+      const address = row[addrCol];
+      if(index == null || !address) continue;
+
+      const g = await geocode(address);
+      if(!g.ok){
+        failCount++;
+        continue;
+      }
+      okCount++;
+      addMarker(index, address, g.lat, g.lng);
+      bounds.extend(new kakao.maps.LatLng(g.lat, g.lng));
+    }
+
+    if(okCount > 0){
+      map.setBounds(bounds);
+      toast(`완료 ✅ ${okCount}개 표시 (실패 ${failCount}개)`);
+    } else {
+      toast(`표시할 좌표가 없어요. 컬럼명/주소를 확인해줘요. (orderCol=${orderCol}, addrCol=${addrCol})`);
+    }
+  }catch(e){
+    toast(`에러: ${e.message}`);
+  }
+})();
+    </script>
+</body>
+</html>
