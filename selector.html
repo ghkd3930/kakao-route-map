@@ -3,13 +3,20 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>검침순로 시트 선택기</title>
+  <title>카카오맵 시트 선택기</title>
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 20px; }
+    h2 { margin: 0 0 14px; }
     .row { margin-bottom: 12px; }
-    select, button, input { width: 100%; padding: 12px; font-size: 16px; }
-    button { cursor: pointer; }
+    label { display:block; font-size: 13px; color:#555; margin-bottom: 6px; }
+    select, button { width: 100%; padding: 12px; font-size: 16px; }
+    button { cursor: pointer; border:0; border-radius:10px; background:#111; color:#fff; }
+    button:disabled { opacity:.5; cursor:not-allowed; }
+    select { border-radius:10px; border:1px solid #ddd; }
     .hint { color:#666; font-size: 13px; line-height: 1.4; }
+    .error { color:#b00020; font-size: 13px; white-space: pre-wrap; }
+    .ok { color:#0a7a2f; font-size: 13px; white-space: pre-wrap; }
+    .preview { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; background:#f6f6f6; padding:10px; border-radius:10px; overflow:auto; }
   </style>
 </head>
 <body>
@@ -33,67 +40,149 @@
     <button id="openBtn" disabled>열기</button>
   </div>
 
-  <p class="hint" id="preview"></p>
+  <div class="row preview" id="preview"></div>
+  <div class="row error" id="error" style="display:none;"></div>
+  <div class="row ok" id="ok" style="display:none;"></div>
 
 <script>
-  const GAS_URL = "https://script.google.com/macros/s/AKfycbyqraf1atjN3ao-YyfJP8dakq1dSiRpY9GVyEnqh5Ww3LWUMVOPYou-r3vdBjvrWVXd/exec"; // 예: https://script.google.com/macros/s/AAAA.../exec
+  /**
+   * ✅ 필수: Apps Script 웹앱(exec) URL 넣기
+   * 예) https://script.google.com/macros/s/AAAA.../exec
+   */
+  const GAS_URL  = "https://script.google.com/macros/s/AKfycbw-zLPzqLEy9yjawPZIg-rArtXU4kkYd75YSt9uqCk_Z2fxUUhjJD0Tp3gP8V0sNU7d/exec";
   const MAP_BASE = "https://ghkd3930.github.io/kakao-route-map/";
 
-  const sidSelect = document.getElementById("sidSelect");
+  const sidSelect   = document.getElementById("sidSelect");
   const sheetSelect = document.getElementById("sheetSelect");
-  const openBtn = document.getElementById("openBtn");
-  const preview = document.getElementById("preview");
+  const openBtn     = document.getElementById("openBtn");
+  const previewEl   = document.getElementById("preview");
+  const errorEl     = document.getElementById("error");
+  const okEl        = document.getElementById("ok");
 
-  function setPreview(url) {
-    preview.textContent = url ? `미리보기: ${url}` : "";
+  function showError(msg){
+    errorEl.style.display = "block";
+    okEl.style.display = "none";
+    errorEl.textContent = msg;
+  }
+  function showOk(msg){
+    okEl.style.display = "block";
+    errorEl.style.display = "none";
+    okEl.textContent = msg;
+  }
+  function clearMsg(){
+    errorEl.style.display = "none";
+    okEl.style.display = "none";
+    errorEl.textContent = "";
+    okEl.textContent = "";
   }
 
-  async function fetchJSON(url) {
-    const res = await fetch(url, { method: "GET" });
-    return await res.json();
+  function setPreview(url){
+    previewEl.textContent = url ? `미리보기\n${url}` : "미리보기\n(스프레드시트와 탭을 선택하세요)";
   }
 
-  async function loadFiles() {
-    const data = await fetchJSON(`${GAS_URL}?action=listSheetsFiles`);
-    sidSelect.innerHTML = "";
-    if (!data.ok) {
-      sidSelect.innerHTML = `<option value="">불러오기 실패</option>`;
+  /**
+   * ✅ CORS 회피용 JSONP 호출
+   * Apps Script doGet이 callback=... 을 받아서 callback(JSON) 형태로 응답해야 함
+   */
+  function jsonp(url){
+    return new Promise((resolve, reject) => {
+      const cbName = "cb_" + Math.random().toString(36).slice(2);
+      const script = document.createElement("script");
+
+      window[cbName] = (data) => {
+        try { delete window[cbName]; } catch(e) { window[cbName] = undefined; }
+        script.remove();
+        resolve(data);
+      };
+
+      script.onerror = () => {
+        try { delete window[cbName]; } catch(e) { window[cbName] = undefined; }
+        script.remove();
+        reject(new Error("JSONP 요청 실패 (script load error)"));
+      };
+
+      const sep = url.includes("?") ? "&" : "?";
+      script.src = `${url}${sep}callback=${cbName}`;
+      document.body.appendChild(script);
+    });
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, m => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
+    }[m]));
+  }
+
+  function buildUrl(){
+    const sid = sidSelect.value;
+    const sheet = sheetSelect.value;
+    if(!sid || !sheet) return "";
+    return `${MAP_BASE}?sid=${encodeURIComponent(sid)}&sheet=${encodeURIComponent(sheet)}`;
+  }
+
+  async function loadFiles(){
+    clearMsg();
+    setPreview("");
+
+    if(!GAS_URL || GAS_URL === "GAS_URL_HERE"){
+      showError("GAS_URL_HERE를 Apps Script 웹앱(exec) URL로 바꿔주세요.");
+      sidSelect.innerHTML = `<option value="">설정 필요</option>`;
       return;
     }
-    sidSelect.innerHTML = `<option value="">선택하세요</option>` + 
-      data.items.map(it => `<option value="${it.sid}">${escapeHtml(it.name)}</option>`).join("");
+
+    sidSelect.disabled = true;
+    sidSelect.innerHTML = `<option value="">불러오는 중…</option>`;
+
+    try{
+      const data = await jsonp(`${GAS_URL}?action=listSheetsFiles`);
+      if(!data || !data.ok){
+        throw new Error(data?.error || "목록 응답이 ok가 아님");
+      }
+
+      sidSelect.innerHTML = `<option value="">선택하세요</option>` +
+        data.items.map(it => `<option value="${escapeHtml(it.sid)}">${escapeHtml(it.name)}</option>`).join("");
+
+      sidSelect.disabled = false;
+      showOk(`스프레드시트 ${data.items.length}개 불러옴 ✅`);
+    }catch(err){
+      showError(`스프레드시트 목록 불러오기 실패:\n${String(err.message || err)}`);
+      sidSelect.innerHTML = `<option value="">불러오기 실패</option>`;
+      sidSelect.disabled = false;
+    }
   }
 
-  async function loadTabs(sid) {
+  async function loadTabs(sid){
+    clearMsg();
     sheetSelect.disabled = true;
     sheetSelect.innerHTML = `<option value="">불러오는 중…</option>`;
     openBtn.disabled = true;
     setPreview("");
 
-    const data = await fetchJSON(`${GAS_URL}?action=listTabs&sid=${encodeURIComponent(sid)}`);
-    sheetSelect.innerHTML = "";
+    try{
+      const url = `${GAS_URL}?action=listTabs&sid=${encodeURIComponent(sid)}`;
+      const data = await jsonp(url);
 
-    if (!data.ok) {
-      sheetSelect.innerHTML = `<option value="">탭 불러오기 실패</option>`;
-      return;
+      if(!data || !data.ok){
+        throw new Error(data?.error || "탭 응답이 ok가 아님");
+      }
+
+      sheetSelect.innerHTML =
+        `<option value="">선택하세요</option>` +
+        data.tabs.map(t => `<option value="${escapeHtml(t.name)}">${escapeHtml(t.name)}</option>`).join("");
+
+      sheetSelect.disabled = false;
+      showOk(`탭 ${data.tabs.length}개 불러옴 ✅`);
+    }catch(err){
+      showError(`탭 불러오기 실패:\n${String(err.message || err)}\n\n(Apps Script가 JSONP(callback=)를 지원하는지 확인하세요)`);
+      sheetSelect.innerHTML = `<option value="">불러오기 실패</option>`;
+      sheetSelect.disabled = true;
     }
-
-    sheetSelect.innerHTML = `<option value="">선택하세요</option>` +
-      data.tabs.map(t => `<option value="${t.name}">${escapeHtml(t.name)}</option>`).join("");
-
-    sheetSelect.disabled = false;
-  }
-
-  function buildUrl() {
-    const sid = sidSelect.value;
-    const sheet = sheetSelect.value;
-    if (!sid || !sheet) return "";
-    return `${MAP_BASE}?sid=${encodeURIComponent(sid)}&sheet=${encodeURIComponent(sheet)}`;
   }
 
   sidSelect.addEventListener("change", async () => {
     const sid = sidSelect.value;
-    if (!sid) {
+
+    if(!sid){
       sheetSelect.disabled = true;
       sheetSelect.innerHTML = `<option value="">스프레드시트를 먼저 선택하세요</option>`;
       openBtn.disabled = true;
@@ -111,19 +200,13 @@
 
   openBtn.addEventListener("click", () => {
     const url = buildUrl();
-    if (!url) return;
-    window.open(url, "_blank"); // 새 탭으로 지도 열기
+    if(!url) return;
+    window.open(url, "_blank");
   });
 
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, m => ({
-      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
-    }[m]));
-  }
-
-  loadFiles().catch(err => {
-    sidSelect.innerHTML = `<option value="">에러: ${String(err)}</option>`;
-  });
+  // 초기 상태
+  setPreview("");
+  loadFiles();
 </script>
 </body>
 </html>
