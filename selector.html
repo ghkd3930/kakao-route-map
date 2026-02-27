@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>검침순로 시트 선택기</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 20px; }
+    .row { margin-bottom: 12px; }
+    select, button, input { width: 100%; padding: 12px; font-size: 16px; }
+    button { cursor: pointer; }
+    .hint { color:#666; font-size: 13px; line-height: 1.4; }
+  </style>
+</head>
+<body>
+  <h2>카카오맵 시트 선택</h2>
+
+  <div class="row">
+    <label>스프레드시트</label>
+    <select id="sidSelect">
+      <option value="">불러오는 중…</option>
+    </select>
+  </div>
+
+  <div class="row">
+    <label>시트 탭</label>
+    <select id="sheetSelect" disabled>
+      <option value="">스프레드시트를 먼저 선택하세요</option>
+    </select>
+  </div>
+
+  <div class="row">
+    <button id="openBtn" disabled>열기</button>
+  </div>
+
+  <p class="hint" id="preview"></p>
+
+<script>
+  const GAS_URL = "https://script.google.com/macros/s/AKfycbyqraf1atjN3ao-YyfJP8dakq1dSiRpY9GVyEnqh5Ww3LWUMVOPYou-r3vdBjvrWVXd/exec"; // 예: https://script.google.com/macros/s/AAAA.../exec
+  const MAP_BASE = "https://ghkd3930.github.io/kakao-route-map/";
+
+  const sidSelect = document.getElementById("sidSelect");
+  const sheetSelect = document.getElementById("sheetSelect");
+  const openBtn = document.getElementById("openBtn");
+  const preview = document.getElementById("preview");
+
+  function setPreview(url) {
+    preview.textContent = url ? `미리보기: ${url}` : "";
+  }
+
+  async function fetchJSON(url) {
+    const res = await fetch(url, { method: "GET" });
+    return await res.json();
+  }
+
+  async function loadFiles() {
+    const data = await fetchJSON(`${GAS_URL}?action=listSheetsFiles`);
+    sidSelect.innerHTML = "";
+    if (!data.ok) {
+      sidSelect.innerHTML = `<option value="">불러오기 실패</option>`;
+      return;
+    }
+    sidSelect.innerHTML = `<option value="">선택하세요</option>` + 
+      data.items.map(it => `<option value="${it.sid}">${escapeHtml(it.name)}</option>`).join("");
+  }
+
+  async function loadTabs(sid) {
+    sheetSelect.disabled = true;
+    sheetSelect.innerHTML = `<option value="">불러오는 중…</option>`;
+    openBtn.disabled = true;
+    setPreview("");
+
+    const data = await fetchJSON(`${GAS_URL}?action=listTabs&sid=${encodeURIComponent(sid)}`);
+    sheetSelect.innerHTML = "";
+
+    if (!data.ok) {
+      sheetSelect.innerHTML = `<option value="">탭 불러오기 실패</option>`;
+      return;
+    }
+
+    sheetSelect.innerHTML = `<option value="">선택하세요</option>` +
+      data.tabs.map(t => `<option value="${t.name}">${escapeHtml(t.name)}</option>`).join("");
+
+    sheetSelect.disabled = false;
+  }
+
+  function buildUrl() {
+    const sid = sidSelect.value;
+    const sheet = sheetSelect.value;
+    if (!sid || !sheet) return "";
+    return `${MAP_BASE}?sid=${encodeURIComponent(sid)}&sheet=${encodeURIComponent(sheet)}`;
+  }
+
+  sidSelect.addEventListener("change", async () => {
+    const sid = sidSelect.value;
+    if (!sid) {
+      sheetSelect.disabled = true;
+      sheetSelect.innerHTML = `<option value="">스프레드시트를 먼저 선택하세요</option>`;
+      openBtn.disabled = true;
+      setPreview("");
+      return;
+    }
+    await loadTabs(sid);
+  });
+
+  sheetSelect.addEventListener("change", () => {
+    const url = buildUrl();
+    setPreview(url);
+    openBtn.disabled = !url;
+  });
+
+  openBtn.addEventListener("click", () => {
+    const url = buildUrl();
+    if (!url) return;
+    window.open(url, "_blank"); // 새 탭으로 지도 열기
+  });
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, m => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
+    }[m]));
+  }
+
+  loadFiles().catch(err => {
+    sidSelect.innerHTML = `<option value="">에러: ${String(err)}</option>`;
+  });
+</script>
+</body>
+</html>
