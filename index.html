@@ -1,17 +1,17 @@
- <!DOCTYPE html>
+<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 
 <!-- ✅ Kakao Maps JS SDK (autoload=false로 안정화) -->
-<script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=f50dc2a44d1f4e5431f0c50eebe87c19&libraries=services"></script>
+ <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=f50dc2a44d1f4e5431f0c50eebe87c19&libraries=services&autoload=false"></script>
 
 <style>
   html, body { width:100%; height:100%; margin:0; padding:0; }
   #map { width:100%; height:100%; }
 
-  /* 번호 아이콘 */
+  /* ✅ 숫자 마커(클릭 대상) */
   .marker{
     background:#d60000; color:#fff;
     width:34px; height:34px; border-radius:50%;
@@ -24,6 +24,9 @@
     pointer-events:auto;
     touch-action:manipulation;
     user-select:none;
+
+    position:relative;
+    z-index:9999;
   }
 
   .toast{
@@ -44,10 +47,6 @@
 /**
  * ✅ 한 링크에서 시트 바꿔끼우기
  *   ?sid=스프레드시트ID&sheet=탭이름&orderCol=순서&addrCol=주소
- * 예)
- *   /kakao-route-map/?sheet=오늘동선
- *   /kakao-route-map/?sid=다른ID&sheet=Sheet1
- *   /kakao-route-map/?orderCol=번호&addrCol=주소지
  */
 const params = new URLSearchParams(location.search);
 
@@ -70,11 +69,11 @@ const toast = (msg) => {
   el.style.display = "block";
 };
 
-/** ✅ 길찾기 열기: 인앱브라우저/딥링크 문제 회피 위해 "웹 길찾기"를 확실히 연다 */
+/** ✅ 길찾기(웹) 확실히 열기: 인앱브라우저/딥링크 이슈 회피 */
 function openKakaoWebRoute(name, lat, lng){
   const webUrl = `https://map.kakao.com/link/to/${encodeURIComponent(name)},${lat},${lng}`;
 
-  // 사용자 클릭 제스처 안에서 새탭 열기 시도 (성공률 높음)
+  // 새탭 열기 시도(성공률 높음)
   const w = window.open(webUrl, "_blank");
 
   // 팝업 차단이면 같은 탭 이동
@@ -122,19 +121,14 @@ kakao.maps.load(async () => {
   }
 
   /**
-   * ✅ 가장 안정적인 클릭 방식:
-   * - 번호는 CustomOverlay(HTML)로 보여주되
-   * - 클릭은 overlay div에 직접 걸고
-   * - 클릭 시 window.open(웹 길찾기)로 확실히 연다
+   * ✅ 핵심 변경:
+   * - 기본 카카오 "핀 마커"는 아예 만들지 않음
+   * - 화면에 보이는 "숫자"가 곧 클릭 대상이 되도록 CustomOverlay만 사용
    */
   function addMarker(index, address, lat, lng){
     const coords = new kakao.maps.LatLng(lat, lng);
 
-    // (1) 지도에 기본 마커(위치용) — 선택사항이지만 안정 위해 유지
-    const marker = new kakao.maps.Marker({ position: coords });
-    marker.setMap(map);
-
-    // (2) 번호 표시용 오버레이 (DOM element로 만들어서 이벤트 확실히 걸기)
+    // 번호 표시용 오버레이 (DOM element)
     const el = document.createElement("div");
     el.className = "marker";
     el.title = address;
@@ -149,22 +143,16 @@ kakao.maps.load(async () => {
     overlay.setMap(map);
     overlays.push(overlay);
 
-    // ✅ 클릭/터치 이벤트
     const handler = (e) => {
       e.preventDefault();
       e.stopPropagation();
-      toast(`열기: ${index}`);
+      // 필요하면 클릭 확인용:
+      // toast(`열기: ${index}`);
       openKakaoWebRoute(String(index), lat, lng);
     };
 
     el.addEventListener("click", handler, { passive: false });
     el.addEventListener("touchend", handler, { passive: false });
-
-    // 마커 클릭도 동일 동작(혹시 오버레이 클릭이 막히는 환경 대비)
-    kakao.maps.event.addListener(marker, "click", function(){
-      toast(`열기: ${index}`);
-      openKakaoWebRoute(String(index), lat, lng);
-    });
   }
 
   try{
