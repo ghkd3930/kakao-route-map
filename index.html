@@ -1,12 +1,11 @@
-
-<!DOCTYPE html>
+ <!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 
-<!-- ✅ Kakao Maps JS SDK -->
-    <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=f50dc2a44d1f4e5431f0c50eebe87c19&libraries=services"></script>
+<!-- ✅ Kakao Maps JS SDK (autoload=false로 안정화) -->
+<script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=f50dc2a44d1f4e5431f0c50eebe87c19&libraries=services"></script>
 
 <style>
   html, body { width:100%; height:100%; margin:0; padding:0; }
@@ -21,11 +20,10 @@
     box-shadow:0 2px 6px rgba(0,0,0,.3);
     cursor:pointer;
 
-    /* ✅ 모바일 터치/클릭 안정 */
+    /* 모바일 터치 안정 */
     pointer-events:auto;
     touch-action:manipulation;
-    position:relative;
-    z-index:9999;
+    user-select:none;
   }
 
   .toast{
@@ -33,6 +31,7 @@
     background:rgba(0,0,0,.78); color:#fff;
     padding:10px 12px; border-radius:10px;
     font-size:13px; line-height:1.4;
+    z-index:999999;
   }
 </style>
 </head>
@@ -44,11 +43,15 @@
 <script>
 /**
  * ✅ 한 링크에서 시트 바꿔끼우기
- * ?sid=스프레드시트ID&sheet=탭이름&orderCol=순서&addrCol=주소
+ *   ?sid=스프레드시트ID&sheet=탭이름&orderCol=순서&addrCol=주소
+ * 예)
+ *   /kakao-route-map/?sheet=오늘동선
+ *   /kakao-route-map/?sid=다른ID&sheet=Sheet1
+ *   /kakao-route-map/?orderCol=번호&addrCol=주소지
  */
 const params = new URLSearchParams(location.search);
 
-// 기본값(네 시트)
+// 기본값(너가 준 시트)
 const DEFAULT_SID   = "1lvmKmQeich7vLiMkDFX9qd1_E5890ATQ33UDcvArMsg";
 const DEFAULT_SHEET = "Sheet1";
 
@@ -67,19 +70,15 @@ const toast = (msg) => {
   el.style.display = "block";
 };
 
-function goKakaoRoute(name, lat, lng){
-  // ✅ 1) 앱 딥링크 시도
-  const appUrl = `kakaomap://route?ep=${lat},${lng}&by=CAR`;
-  // ✅ 2) 실패하면 웹 길찾기
+/** ✅ 길찾기 열기: 인앱브라우저/딥링크 문제 회피 위해 "웹 길찾기"를 확실히 연다 */
+function openKakaoWebRoute(name, lat, lng){
   const webUrl = `https://map.kakao.com/link/to/${encodeURIComponent(name)},${lat},${lng}`;
 
-  const t = Date.now();
-  location.href = appUrl;
+  // 사용자 클릭 제스처 안에서 새탭 열기 시도 (성공률 높음)
+  const w = window.open(webUrl, "_blank");
 
-  // iOS/카톡 인앱브라우저 대비 fallback
-  setTimeout(() => {
-    if (Date.now() - t < 1500) location.href = webUrl;
-  }, 800);
+  // 팝업 차단이면 같은 탭 이동
+  if (!w) location.href = webUrl;
 }
 
 async function loadSheet(){
@@ -122,30 +121,50 @@ kakao.maps.load(async () => {
     }
   }
 
-  // ✅ 클릭 안정: 실제 Marker + 번호 Overlay
+  /**
+   * ✅ 가장 안정적인 클릭 방식:
+   * - 번호는 CustomOverlay(HTML)로 보여주되
+   * - 클릭은 overlay div에 직접 걸고
+   * - 클릭 시 window.open(웹 길찾기)로 확실히 연다
+   */
   function addMarker(index, address, lat, lng){
     const coords = new kakao.maps.LatLng(lat, lng);
 
-    // (1) 실제 마커: 클릭/터치 안정
+    // (1) 지도에 기본 마커(위치용) — 선택사항이지만 안정 위해 유지
     const marker = new kakao.maps.Marker({ position: coords });
     marker.setMap(map);
 
-    // (2) 번호 오버레이: 표시용
-    const content = `<div class="marker" title="${address}">${index}</div>`;
+    // (2) 번호 표시용 오버레이 (DOM element로 만들어서 이벤트 확실히 걸기)
+    const el = document.createElement("div");
+    el.className = "marker";
+    el.title = address;
+    el.textContent = index;
+
     const overlay = new kakao.maps.CustomOverlay({
       position: coords,
-      content,
+      content: el,
       yAnchor: 1,
       zIndex: 9999
     });
     overlay.setMap(map);
-
-    // 클릭은 marker로 받기
-    kakao.maps.event.addListener(marker, 'click', function(){
-      goKakaoRoute(String(index), lat, lng);
-    });
-
     overlays.push(overlay);
+
+    // ✅ 클릭/터치 이벤트
+    const handler = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      toast(`열기: ${index}`);
+      openKakaoWebRoute(String(index), lat, lng);
+    };
+
+    el.addEventListener("click", handler, { passive: false });
+    el.addEventListener("touchend", handler, { passive: false });
+
+    // 마커 클릭도 동일 동작(혹시 오버레이 클릭이 막히는 환경 대비)
+    kakao.maps.event.addListener(marker, "click", function(){
+      toast(`열기: ${index}`);
+      openKakaoWebRoute(String(index), lat, lng);
+    });
   }
 
   try{
