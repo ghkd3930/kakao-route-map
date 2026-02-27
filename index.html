@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 
 <!-- ✅ Kakao Maps JS SDK (autoload=false로 안정화) -->
- <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=f50dc2a44d1f4e5431f0c50eebe87c19&libraries=services&autoload=false"></script>
+<script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=f50dc2a44d1f4e5431f0c50eebe87c19&libraries=services&autoload=false"></script>
 
 <style>
   html, body { width:100%; height:100%; margin:0; padding:0; }
@@ -20,7 +20,6 @@
     box-shadow:0 2px 6px rgba(0,0,0,.3);
     cursor:pointer;
 
-    /* 모바일 터치 안정 */
     pointer-events:auto;
     touch-action:manipulation;
     user-select:none;
@@ -29,24 +28,66 @@
     z-index:9999;
   }
 
+  /* ✅ 내 위치 점 */
+  .me-dot{
+    width:14px; height:14px; border-radius:50%;
+    background:#2d7ff9;
+    box-shadow:0 0 0 6px rgba(45,127,249,0.25);
+    border:2px solid #fff;
+  }
+
+  /* ✅ 하단 토스트 */
   .toast{
     position:fixed; left:12px; right:12px; bottom:12px;
     background:rgba(0,0,0,.78); color:#fff;
     padding:10px 12px; border-radius:10px;
     font-size:13px; line-height:1.4;
     z-index:999999;
+    display:none;
   }
+
+  /* ✅ 내 위치 버튼 */
+  .controls{
+    position:fixed;
+    top:12px;
+    right:12px;
+    z-index:999999;
+    display:flex;
+    gap:8px;
+  }
+  .btn{
+    border:0;
+    padding:10px 12px;
+    border-radius:10px;
+    background:rgba(0,0,0,.78);
+    color:#fff;
+    font-size:13px;
+    cursor:pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .btn:active{ transform: translateY(1px); }
 </style>
 </head>
 
 <body>
   <div id="map"></div>
-  <div id="toast" class="toast" style="display:none;"></div>
+
+  <div class="controls">
+    <button class="btn" id="btnMyLoc">내 위치</button>
+    <button class="btn" id="btnReaskLoc">권한 다시요청</button>
+  </div>
+
+  <div id="toast" class="toast"></div>
 
 <script>
 /**
  * ✅ 한 링크에서 시트 바꿔끼우기
  *   ?sid=스프레드시트ID&sheet=탭이름&orderCol=순서&addrCol=주소
+ *
+ * 예)
+ *   https://.../kakao-route-map/?sheet=오늘동선
+ *   https://.../kakao-route-map/?sid=다른ID&sheet=Sheet1
+ *   https://.../kakao-route-map/?orderCol=번호&addrCol=주소지
  */
 const params = new URLSearchParams(location.search);
 
@@ -63,21 +104,17 @@ const sheet    = params.get("sheet")    || DEFAULT_SHEET;
 const orderCol = params.get("orderCol") || DEFAULT_ORDER_COL;
 const addrCol  = params.get("addrCol")  || DEFAULT_ADDR_COL;
 
-const toast = (msg) => {
-  const el = document.getElementById("toast");
-  el.textContent = msg;
-  el.style.display = "block";
-};
+const toastEl = document.getElementById("toast");
+function toast(msg){
+  toastEl.textContent = msg;
+  toastEl.style.display = "block";
+}
 
 /** ✅ 길찾기(웹) 확실히 열기: 인앱브라우저/딥링크 이슈 회피 */
 function openKakaoWebRoute(name, lat, lng){
   const webUrl = `https://map.kakao.com/link/to/${encodeURIComponent(name)},${lat},${lng}`;
-
-  // 새탭 열기 시도(성공률 높음)
-  const w = window.open(webUrl, "_blank");
-
-  // 팝업 차단이면 같은 탭 이동
-  if (!w) location.href = webUrl;
+  const w = window.open(webUrl, "_blank"); // 새탭 시도
+  if (!w) location.href = webUrl;          // 팝업 차단이면 같은 탭 이동
 }
 
 async function loadSheet(){
@@ -85,7 +122,9 @@ async function loadSheet(){
   const url = `https://opensheet.elk.sh/${encodeURIComponent(sid)}/${encodeURIComponent(sheet)}`;
   const res = await fetch(url);
   if(!res.ok) throw new Error(`시트 불러오기 실패: HTTP ${res.status}`);
-  return await res.json();
+  const data = await res.json();
+  toast(`시트 로드됨: ${data.length}행 (orderCol=${orderCol}, addrCol=${addrCol})`);
+  return data;
 }
 
 function geocode(geocoder, address){
@@ -121,14 +160,12 @@ kakao.maps.load(async () => {
   }
 
   /**
-   * ✅ 핵심 변경:
-   * - 기본 카카오 "핀 마커"는 아예 만들지 않음
-   * - 화면에 보이는 "숫자"가 곧 클릭 대상이 되도록 CustomOverlay만 사용
+   * ✅ 숫자만 “진짜 클릭 대상”으로 (기본 핀 마커 없음)
+   * - 화면에 보이는 빨간 숫자를 누르면 바로 길찾기 페이지 열림
    */
   function addMarker(index, address, lat, lng){
     const coords = new kakao.maps.LatLng(lat, lng);
 
-    // 번호 표시용 오버레이 (DOM element)
     const el = document.createElement("div");
     el.className = "marker";
     el.title = address;
@@ -146,8 +183,6 @@ kakao.maps.load(async () => {
     const handler = (e) => {
       e.preventDefault();
       e.stopPropagation();
-      // 필요하면 클릭 확인용:
-      // toast(`열기: ${index}`);
       openKakaoWebRoute(String(index), lat, lng);
     };
 
@@ -155,6 +190,110 @@ kakao.maps.load(async () => {
     el.addEventListener("touchend", handler, { passive: false });
   }
 
+  // =========================
+  // ✅ 내 위치 표시(점 + 정확도 원)
+  // =========================
+  let myPosOverlay = null;
+  let myAccCircle = null;
+  let watchId = null;
+
+  function showMyLocation(lat, lng, accuracyMeters){
+    const pos = new kakao.maps.LatLng(lat, lng);
+
+    // 내 위치 점(Overlay)
+    if(!myPosOverlay){
+      const el = document.createElement("div");
+      el.className = "me-dot";
+      myPosOverlay = new kakao.maps.CustomOverlay({
+        position: pos,
+        content: el,
+        yAnchor: 0.5,
+        zIndex: 10000
+      });
+      myPosOverlay.setMap(map);
+    } else {
+      myPosOverlay.setPosition(pos);
+    }
+
+    // 정확도 원(Circle)
+    const r = Math.max(Number(accuracyMeters || 0), 10);
+    if(!myAccCircle){
+      myAccCircle = new kakao.maps.Circle({
+        center: pos,
+        radius: r,
+        strokeWeight: 2,
+        strokeOpacity: 0.7,
+        fillOpacity: 0.15
+      });
+      myAccCircle.setMap(map);
+    } else {
+      myAccCircle.setPosition(pos);
+      myAccCircle.setRadius(r);
+    }
+  }
+
+  function panToMyLocation(){
+    if(!myPosOverlay){
+      toast("내 위치가 아직 없어요. 권한을 허용해줘요.");
+      return;
+    }
+    map.panTo(myPosOverlay.getPosition());
+  }
+
+  function startMyLocationTracking(){
+    if(!navigator.geolocation){
+      toast("이 브라우저는 위치 기능을 지원하지 않아요.");
+      return;
+    }
+
+    // 1회 현재 위치
+    navigator.geolocation.getCurrentPosition(
+      (p) => {
+        const { latitude, longitude, accuracy } = p.coords;
+        showMyLocation(latitude, longitude, accuracy);
+        toast("내 위치 표시됨 ✅");
+      },
+      (err) => {
+        toast(`위치 권한/오류: ${err.message}`);
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
+    );
+
+    // 지속 추적
+    if(watchId != null) navigator.geolocation.clearWatch(watchId);
+    watchId = navigator.geolocation.watchPosition(
+      (p) => {
+        const { latitude, longitude, accuracy } = p.coords;
+        showMyLocation(latitude, longitude, accuracy);
+      },
+      (err) => {
+        toast(`위치 추적 오류: ${err.message}`);
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
+    );
+  }
+
+  // 버튼 연결
+  document.getElementById("btnMyLoc").addEventListener("click", () => {
+    // 내 위치가 있으면 이동, 없으면 추적 시작 후 이동
+    if(!myPosOverlay){
+      startMyLocationTracking();
+      setTimeout(panToMyLocation, 1200);
+    } else {
+      panToMyLocation();
+    }
+  });
+
+  document.getElementById("btnReaskLoc").addEventListener("click", () => {
+    startMyLocationTracking();
+  });
+
+  // 페이지 로드 시 내 위치 추적 시작(원치 않으면 이 줄을 주석 처리)
+  startMyLocationTracking();
+
+  // =========================
+  // ✅ 시트 → 마커 표시
+  // =========================
   try{
     const data = await loadSheet();
     clearOverlays();
