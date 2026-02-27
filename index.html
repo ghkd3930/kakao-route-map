@@ -9,6 +9,7 @@
   html, body { width:100%; height:100%; margin:0; padding:0; }
   #map { width:100%; height:100%; }
 
+  /* 숫자 마커 */
   .marker{
     background:#d60000; color:#fff;
     width:34px; height:34px; border-radius:50%;
@@ -23,6 +24,7 @@
     z-index:9999;
   }
 
+  /* 내 위치 점 */
   .me-dot{
     width:14px; height:14px; border-radius:50%;
     background:#2d7ff9;
@@ -30,6 +32,7 @@
     border:2px solid #fff;
   }
 
+  /* 토스트 */
   .toast{
     position:fixed; left:12px; right:12px; bottom:12px;
     background:rgba(0,0,0,.78); color:#fff;
@@ -39,6 +42,7 @@
     display:none;
   }
 
+  /* 컨트롤 */
   .controls{
     position:fixed;
     top:12px;
@@ -72,7 +76,12 @@
   <div id="toast" class="toast"></div>
 
 <script>
+/**
+ * URL 파라미터
+ * ?sid=스프레드시트ID&sheet=탭이름&orderCol=순서&addrCol=주소
+ */
 const params = new URLSearchParams(location.search);
+
 const DEFAULT_SID   = "1lvmKmQeich7vLiMkDFX9qd1_E5890ATQ33UDcvArMsg";
 const DEFAULT_SHEET = "Sheet1";
 const DEFAULT_ORDER_COL = "순서";
@@ -89,6 +98,7 @@ function toast(msg){
   toastEl.style.display = "block";
 }
 
+/** 길찾기(웹) 열기 */
 function openKakaoWebRoute(name, lat, lng){
   const webUrl = `https://map.kakao.com/link/to/${encodeURIComponent(name)},${lat},${lng}`;
   const w = window.open(webUrl, "_blank");
@@ -113,9 +123,16 @@ kakao.maps.load(async () => {
   const geocoder = new kakao.maps.services.Geocoder();
 
   // =========================
-  // 1) 마커(오버레이) 관리
+  // 1) 마커는 "무조건 표시"
   // =========================
-  const markers = []; // { index, address, lat, lng, overlay, visible }
+  const overlays = [];
+
+  function clearOverlays(){
+    while(overlays.length){
+      const ov = overlays.pop();
+      ov.setMap(null);
+    }
+  }
 
   function addMarker(index, address, lat, lng){
     const coords = new kakao.maps.LatLng(lat, lng);
@@ -132,11 +149,9 @@ kakao.maps.load(async () => {
       zIndex: 9999
     });
 
-    // ✅ 처음엔 지도에 안 올려도 됨(내 위치 중심 모드에서 “근처일 때만 보이게” 가능)
-    // overlay.setMap(map);
-
-    const item = { index, address, lat, lng, overlay, visible:false };
-    markers.push(item);
+    // ✅ 항상 지도에 올려둠
+    overlay.setMap(map);
+    overlays.push(overlay);
 
     const handler = (e) => {
       e.preventDefault();
@@ -160,21 +175,22 @@ kakao.maps.load(async () => {
   }
 
   // =========================
-  // 2) 내 위치 표시 + 따라가기
+  // 2) 내 위치 표시 + "내 위치 중심" 따라가기
   // =========================
   let myPosOverlay = null;
   let myAccCircle = null;
   let watchId = null;
 
-  let followMe = true; // ✅ 기본 ON
+  let followMe = true; // 기본 ON
   const btnFollow = document.getElementById("btnFollow");
+
   btnFollow.onclick = () => {
     followMe = !followMe;
     btnFollow.textContent = `따라가기: ${followMe ? "ON" : "OFF"}`;
-    if(followMe) panToMyLocation();
+    if(followMe) panToMyLocation(true);
   };
 
-  document.getElementById("btnMyLoc").onclick = () => panToMyLocation();
+  document.getElementById("btnMyLoc").onclick = () => panToMyLocation(true);
 
   function showMyLocation(lat, lng, accuracyMeters){
     const pos = new kakao.maps.LatLng(lat, lng);
@@ -209,41 +225,14 @@ kakao.maps.load(async () => {
     }
   }
 
-  function panToMyLocation(){
-    if(!myPosOverlay) return;
-    map.panTo(myPosOverlay.getPosition());
-  }
-
-  // =========================
-  // 3) “근처 마커만 보이기” (선택 기능)
-  // =========================
-  // ✅ 반경(m) 안의 마커만 지도에 올린다 (카카오맵처럼 주변만 보이게)
-  const SHOW_WITHIN_METERS = 3000; // 필요하면 1000/2000/5000 등으로 조절
-
-  function distanceMeters(lat1,lng1,lat2,lng2){
-    // Haversine
-    const R = 6371000;
-    const toRad = (d)=> d*Math.PI/180;
-    const dLat = toRad(lat2-lat1);
-    const dLng = toRad(lng2-lng1);
-    const a = Math.sin(dLat/2)**2
-            + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;
-    return 2*R*Math.asin(Math.sqrt(a));
-  }
-
-  function updateVisibleMarkers(myLat, myLng){
-    for(const m of markers){
-      const d = distanceMeters(myLat, myLng, m.lat, m.lng);
-      const shouldShow = d <= SHOW_WITHIN_METERS;
-
-      if(shouldShow && !m.visible){
-        m.overlay.setMap(map);
-        m.visible = true;
-      } else if(!shouldShow && m.visible){
-        m.overlay.setMap(null);
-        m.visible = false;
-      }
+  function panToMyLocation(animated){
+    if(!myPosOverlay){
+      toast("내 위치가 아직 없어요. 권한을 허용해줘요.");
+      return;
     }
+    const p = myPosOverlay.getPosition();
+    if(animated) map.panTo(p);
+    else map.setCenter(p);
   }
 
   function startMyLocationTracking(){
@@ -259,22 +248,29 @@ kakao.maps.load(async () => {
         const { latitude, longitude, accuracy } = p.coords;
         showMyLocation(latitude, longitude, accuracy);
 
-        // ✅ 지도는 내 위치 중심 유지
-        if(followMe) map.panTo(new kakao.maps.LatLng(latitude, longitude));
-
-        // ✅ 근처 마커만 보이게 업데이트
-        updateVisibleMarkers(latitude, longitude);
+        // ✅ 지도는 항상 내 위치 중심(ON일 때)
+        if(followMe){
+          map.panTo(new kakao.maps.LatLng(latitude, longitude));
+        }
       },
       (err) => toast(`위치 추적 오류: ${err.message}`),
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
     );
   }
 
+  // 사용자가 지도를 손으로 움직이면 따라가기 OFF (카카오맵 느낌)
+  kakao.maps.event.addListener(map, 'dragstart', function(){
+    followMe = false;
+    btnFollow.textContent = `따라가기: OFF`;
+  });
+
   // =========================
-  // 4) 시트 로드 → 마커 준비
+  // 3) 시트 로드 → 마커 표시 (항상 표시)
   // =========================
   try{
     const data = await loadSheet();
+    clearOverlays();
+
     data.sort((a,b)=> Number(a[orderCol]) - Number(b[orderCol]));
 
     let okCount = 0, failCount = 0;
@@ -289,19 +285,13 @@ kakao.maps.load(async () => {
       okCount++;
       addMarker(index, address, g.lat, g.lng);
     }
-    toast(`마커 준비됨 ✅ ${okCount}개 (지오코딩 실패 ${failCount}개). 내 위치를 켜면 주변만 보여요.`);
+    toast(`마커 표시됨 ✅ ${okCount}개 (지오코딩 실패 ${failCount}개). 내 위치 중심으로 이동합니다.`);
   }catch(e){
     toast(`에러: ${e.message}`);
   }
 
-  // ✅ 마지막: 내 위치 추적 시작
+  // ✅ 마지막: 내 위치 추적 시작 (내 위치 중심 모드)
   startMyLocationTracking();
-
-  // ✅ 사용자가 지도 드래그하면 따라가기 OFF (카카오맵 느낌)
-  kakao.maps.event.addListener(map, 'dragstart', function(){
-    followMe = false;
-    btnFollow.textContent = `따라가기: OFF`;
-  });
 });
 </script>
 </body>
